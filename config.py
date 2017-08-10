@@ -1,3 +1,8 @@
+import sys
+from os import path, getcwd
+import re
+
+
 def get_config():
     if getattr(sys, 'frozen', False):
         application_path = path.dirname(sys.executable)

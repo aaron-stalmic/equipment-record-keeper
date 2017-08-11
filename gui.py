@@ -3,6 +3,8 @@ from tkinter import ttk
 from dbfunctions import *
 from tkinter import font
 
+TITLE = "Equipment Records"
+
 
 class AutocompleteCombobox(ttk.Combobox):
     def set_completion_list(self, completion_list):
@@ -54,9 +56,9 @@ class AutocompleteCombobox(ttk.Combobox):
         if event.keysym == 'Left':
             if self.position < self.index(tk.END):  # Delete the selection.
                 self.delete(self.position, tk.END)
-            else:
-                self.position = self.position - 1  # Delete one character.
-                self.delete(self.position, tk.END)
+            # else
+            #    self.position = self.position - 1  # Delete one character.
+            #    self.delete(self.position, tk.END)
         if event.keysym == 'Right' or event.keysym == 'KP_Enter':
             self.position == self.index(tk.END)  # Go to end (no selection)
         if len(event.keysym) == 1:
@@ -129,10 +131,13 @@ class MainApplication(tk.Frame):
         self._is_service.grid(row=1, column=5)
         # Get the width and height after we've made our entry fields.
         width, height = self.parent.grid_size()
+        self.add_button = tk.Button(self.parent, text="Add",
+                                    command=self.add_entry, width=5)
+        self.add_button.grid(row=1, column=width)
         # Add a search button to the end.
         self.search_button = tk.Button(self.parent, text="Search",
-                                       command=self.search)
-        self.search_button.grid(row=1, column=width)
+                                       command=self.search, width=5)
+        self.search_button.grid(row=0, column=width)
         # Big results box. Needs to span past the search button.
         self.results = ResultsWindow(self.parent, row=height, column=0,
                                      columnspan=width+1,
@@ -172,10 +177,10 @@ class MainApplication(tk.Frame):
                 return [item for sublist in values for item in sublist]
 
     def add_combobox(self, label, r, c, location=[]):
+        completion_list = self.get_lists(location)
         # Create a StringVar in the Value dictionary
         self.value[label] = tk.StringVar()
         tk.Label(self.parent, text=label).grid(row=r, column=c)
-        completion_list = self.get_lists(location)
         combo = AutocompleteCombobox(self.parent,
                                      textvariable=self.value[label],
                                      values=completion_list)
@@ -217,14 +222,19 @@ class MainApplication(tk.Frame):
         # self.results.config(state=tk.DISABLED)
 
     def add_entry(self):
-        customer = self.value["Customer"].get()
-        item = self.value["Model No."].get()
+        # Get Customer, Item, Vendor IDs.
+        customer = get_id(self.value["Customer"].get(),
+                          'Customer', 'CustomerNum')
+        item = get_id(self.value["Model No."].get(),
+                      'Inventory', 'InventoryNum')
         serial = self.value["Serial No."].get()
         pur = self.is_purchase.get()
         serv = self.is_service.get()
+        EquipmentRecord(item, serial, pur, serv, customer).add_record()
 
 
 if __name__ == '__main__':
     root = tk.Tk()
+    root.wm_title(TITLE)
     MainApplication(root)
     root.mainloop()

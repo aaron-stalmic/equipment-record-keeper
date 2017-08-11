@@ -2,11 +2,20 @@ import pyodbc
 import itertools
 from contextlib import contextmanager
 from config import get_config
+import tkinter as tk
+from tkinter import messagebox
+from gui import TITLE
+import sys
 
 
 @contextmanager
 def open_connection(connect_string, commit=False):
-    connection = pyodbc.connect(connect_string)
+    try:
+        connection = pyodbc.connect(connect_string)
+    except:
+        tk.messagebox.showerror(TITLE, "Could not connect to database.")
+        return
+
     connection.setdecoding(pyodbc.SQL_CHAR, encoding='utf-8')
     connection.setdecoding(pyodbc.SQL_WCHAR, encoding='utf-8')
     connection.setencoding('utf-8')
@@ -36,6 +45,22 @@ def stalmic_connection(commit=False):
             UID={};PWD={}'.format(config[0], config[1],
                                   config[2], config[3])
     return open_connection(connect_string, commit)
+
+
+def get_id(value, table, column):
+    # Prevent SQL injection:
+    assert table == 'Customer' or table == 'Inventory' or table == 'Vendor',\
+        "Table name not in whitelist (Customer, Inventory, Vendor)."
+    assert (column == 'CustomerNum' or column == 'InventoryNum' or
+            column == 'VendorNum'), ("Column name not in whitelist "
+                                     "(CustomerNum, InventoryNum, VendorNum).")
+    with stalmic_connection() as cursor:
+        command = 'SELECT * FROM {} WHERE {} = ?'.format(table, column)
+        cursor.execute(command, value)
+        try:
+            return cursor.fetchone()[0]
+        except TypeError:
+            return None
 
 
 class EquipmentRecord:
@@ -92,10 +117,28 @@ class EquipmentRecord:
                 return None
 
     def get_record(self):
+        try:
+            invdate = self.InvoiceDate.strftime("%m/%d/%Y")
+        except AttributeError:
+            invdate = None
+        try:
+            purdate = self.PurchaseDate.strftime("%m/%d/%Y")
+        except AttributeError:
+            purdate = None
         return (self.ID, self.get_item(), self.SerialNumber,
                 self.StalmicPurchase, self.ServiceAgreement,
-                self.get_customer(), self.InvoiceDate.strftime("%m/%d/%Y"),
-                self.get_vendor(), self.PurchaseDate.strftime("%m/%d/%Y"))
+                self.get_customer(), invdate, self.get_vendor(), purdate)
+
+    def add_record(self):
+        with stalmic_connection(True) as cursor:
+            command = '''
+            INSERT INTO EquipmentRecords VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            '''
+            cursor.execute(command, (self.InventoryID, self.CustomerID,
+                                     self.VendorID, self.PurchaseDate,
+                                     self.InvoiceDate, self.SerialNumber,
+                                     self.StalmicPurchase,
+                                     self.ServiceAgreement))
 
     def __repr__(self):
         return str((self.ID, self.InventoryID, self.SerialNumber,

@@ -63,6 +63,29 @@ def get_id(value, table, column):
             return None
 
 
+def get_value_by_id(id, table, column, id_column):
+    assert (table == 'Customer' or table == 'Inventory' or table == 'Vendor' or
+            table == 'EquipmentRecords'), ("Table name not in whitelist "
+                                           "(Customer, Inventory, Vendor).")
+    assert (column == 'CustomerNum' or column == 'InventoryNum' or
+            column == 'VendorNum' or column == 'SerialNumber'), (
+            "Column name not in whitelist "
+            "(CustomerNum, InventoryNum, VendorNum).")
+    assert (id_column == 'CustomerID' or id_column == 'InventoryID' or
+            id_column == 'VendorID' or id_column == 'EquipmentRecordsID'), (
+            "ID column name not in whitelist "
+            "(CustomerID, InventoryID, VendorID).")
+    with stalmic_connection() as cursor:
+        command = 'SELECT {} FROM {} WHERE {} = ?'.format(column, table,
+                                                          id_column)
+        print(command, id)
+        cursor.execute(command, id)
+        try:
+            return cursor.fetchone()[0]
+        except TypeError:
+            return None
+
+
 class EquipmentRecord:
     def __init__(self, InventoryID, SerialNumber=None, StalmicPurchase=True,
                  ServiceAgreement=None, CustomerID=None, InvoiceDate=None,
@@ -140,6 +163,41 @@ class EquipmentRecord:
                                      self.StalmicPurchase,
                                      self.ServiceAgreement))
 
+    def edit_record(self):
+        command = 'UPDATE EquipmentRecords SET'
+        vars = []
+        var_string = []
+        if self.InventoryID:
+            vars.append(self.InventoryID)
+            var_string.append('InventoryID = ?')
+        if self.CustomerID:
+            vars.append(self.CustomerID)
+            var_string.append('CustomerID = ?')
+        if self.VendorID:
+            vars.append(self.VendorID)
+            var_string.append('VendorID = ?')
+        if self.PurchaseDate:
+            vars.append(self.PurchaseDate)
+            var_string.append('PurchaseDate = ?')
+        if self.InvoiceDate:
+            vars.append(self.InvoiceDate)
+            var_string.append('InvoiceDate = ?')
+        if self.SerialNumber:
+            vars.append(self.SerialNumber)
+            var_string.append('SerialNumber = ?')
+        if self.StalmicPurchase:
+            vars.append(self.StalmicPurchase)
+            var_string.append('StalmicPurchase = ?')
+        if self.ServiceAgreement:
+            vars.append(self.ServiceAgreement)
+            var_string.append('ServiceAgreement = ?')
+        command += ' ' + ', '.join(var_string)
+        command += ' WHERE EquipmentRecordsID = ?'
+        vars.append(self.ID)
+        if len(vars) > 1:
+            with stalmic_connection(True) as cursor:
+                cursor.execute(command, vars)
+
     def __repr__(self):
         return str((self.ID, self.InventoryID, self.SerialNumber,
                     self.StalmicPurchase, self.ServiceAgreement,
@@ -150,7 +208,7 @@ class EquipmentRecord:
 class EquipmentList:
     def __init__(self, CustomerID=None, InventoryID=None, SerialNumber=None,
                  CustomerNum=None, InventoryNum=None, StalmicPurchase=None,
-                 ServiceAgreement=None):
+                 ServiceAgreement=None, ID=None):
         self.CustomerID = CustomerID
         self.InventoryID = InventoryID
         self.SerialNumber = SerialNumber
@@ -159,15 +217,16 @@ class EquipmentList:
         # These are for searches:
         self.CustomerNum = CustomerNum
         self.InventoryNum = InventoryNum
+        self.ID = ID
         # Build the SELECT statement.
         equipment_command = '''
         SELECT EquipmentRecords.InventoryID, SerialNumber, StalmicPurchase,
         ServiceAgreement, EquipmentRecords.CustomerID, InvoiceDate,
         EquipmentRecords.VendorID, PurchaseDate, EquipmentRecordsID
         FROM EquipmentRecords
-        INNER JOIN Customer
+        LEFT JOIN Customer
         ON EquipmentRecords.CustomerID = Customer.CustomerID
-        INNER JOIN Inventory
+        LEFT JOIN Inventory
         ON EquipmentRecords.InventoryID = Inventory.InventoryID
         '''
         # Build our WHERE statement if there are variables.
@@ -194,6 +253,9 @@ class EquipmentList:
         if self.StalmicPurchase:
             vars.append(self.StalmicPurchase)
             var_string.append('StalmicPurchase = ?')
+        if self.ID:
+            vars.append(self.ID)
+            var_string.append('EquipmentRecordsID = ?')
         vars = tuple(vars)
         # Join them together with AND.
         var_string = ' AND '.join(var_string)
@@ -201,7 +263,13 @@ class EquipmentList:
             equipment_command += 'WHERE '
             equipment_command += var_string
         # Sort by Customer for now.
-        equipment_command += '\nORDER BY CustomerNum'
+        equipment_command += '''
+        ORDER BY CASE WHEN CustomerNum IS NULL THEN 1 ELSE 0 END, CustomerNum,
+        CASE WHEN InventoryNum IS NULL THEN 1 ELSE 0 END, InventoryNum,
+        CASE WHEN InvoiceDate IS NULL THEN 1 ELSE 0 END, InvoiceDate,
+        CASE WHEN SerialNumber IS NULL OR SerialNumber = '' THEN 1 ELSE 0 END,
+        SerialNumber
+        '''
         with stalmic_connection() as cursor:
             cursor.execute(equipment_command, vars)
             self.equipment = cursor.fetchall()

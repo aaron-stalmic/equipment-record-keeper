@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk
+import dateutil.parser
 from dbfunctions import *
 from tkinter import font
 
@@ -66,19 +67,22 @@ class AutocompleteCombobox(ttk.Combobox):
 
 
 class ResultsWindow(tk.Frame):
-    def __init__(self, parent, row, column, columnspan=1, sticky=None):
-        tk.Frame.__init__(self, parent)
-        self.canvas = tk.Canvas(parent, borderwidth=0)
+    def __init__(self, parent, main, row, column, columnspan=1, sticky=None):
+        self.parent = parent
+        self.main = main
+        tk.Frame.__init__(self, self.parent)
+        self.canvas = tk.Canvas(self.parent, borderwidth=0)
         self.frame = tk.Frame(self.canvas)
-        self.vsb = tk.Scrollbar(parent, orient='vertical',
+        self.vsb = tk.Scrollbar(self.parent, orient='vertical',
                                 command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.vsb.set)
-        width, height = parent.grid_size()
+        width, height = self.parent.grid_size()
         self.vsb.grid(row=height, column=width+1, sticky=tk.N+tk.S+tk.W)
         self.canvas.grid(row=row, column=column, columnspan=columnspan,
                          sticky=sticky)
         self.canvas.create_window((4, 4), window=self.frame, anchor='nw',
                                   tags='self.frame')
+        self.canvas.bind_all('<MouseWheel>', self._on_mousewheel)
         self.frame.bind('<Configure>', self.onFrameConfigure)
 
     def populate(self, data):
@@ -86,25 +90,43 @@ class ResultsWindow(tk.Frame):
             widget.destroy()
         for r in range(len(data)):
             if r != 0:
-                tk.Button(self.frame, text="Edit").grid(row=r, column=0)
+                editbutton = tk.Button(self.frame, text="Edit",
+                                       command=lambda x=r: self.edit(
+                                                                data[x][0]))
+                editbutton.grid(row=r, column=0)
             for c in range(len(data[r])):
                 item = tk.Label(self.frame, text=str(data[r][c]))
                 if r == 0:
                     f = font.Font(item, item.cget('font'))
-                    f.configure(underline = True)
+                    f.configure(underline=True)
                     item.configure(font=f)
+                if data[r][c] is True:
+                    item.configure(text='YES', foreground='green')
+                elif data[r][c] is False:
+                    item.configure(text='NO', foreground='red')
                 item.grid(row=r, column=c+1, padx=5)
-
 
     def onFrameConfigure(self, event):
         '''Reset the scroll region to encompass the inner frame'''
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _on_mousewheel(self, event):
+        self.canvas.yview_scroll(int(-1*event.delta//120), 'units')
+
+    def edit(self, id):
+        EditWindow(self, self.main, id)
 
 
 class MainApplication(tk.Frame):
     def __init__(self, parent, *args, **kwargs):
         tk.Frame.__init__(self, parent, *args, **kwargs)
         self.parent = parent
+        # Make a menu bar for the sync command.
+        self.menubar = tk.Menu(self.parent)
+        self.filemenu = tk.Menu(self.menubar, tearoff=0)
+        self.filemenu.add_command(label='Push to Customer Notes')
+        self.menubar.add_cascade(label='Database', menu=self.filemenu)
+        self.parent.config(menu=self.menubar)
         # configure row and column weights.
         # Make a dictionary for the combobox values.
         self.value = {}
@@ -116,10 +138,16 @@ class MainApplication(tk.Frame):
                                           ['Customer', 'CustomerNum'])
         self._invdate = tk.Label(self.parent, text="Invoice Date")
         self._invdate.grid(row=0, column=3)
-        self.invdate = tk.Entry(self.parent).grid(row=1, column=3)
+        self.value["Invoice Date"] = tk.StringVar()
+        self.invdate = tk.Entry(self.parent,
+                                textvariable=self.value["Invoice Date"]).grid(
+                                row=1, column=3)
         self._purdate = tk.Label(self.parent, text="Purchase Date")
         self._purdate.grid(row=0, column=4)
-        self.purdate = tk.Entry(self.parent).grid(row=1, column=4)
+        self.value["Purchase Date"] = tk.StringVar()
+        self.purdate = tk.Entry(self.parent,
+                                textvariable=self.value["Purchase Date"]).grid(
+                                row=1, column=4)
         # TODO: Implement TRI-STATE VALUE for checkboxes.
         self.is_purchase = tk.IntVar()
         self._is_purchase = tk.Checkbutton(self.parent, text="Stalmic Pur.",
@@ -139,7 +167,7 @@ class MainApplication(tk.Frame):
                                        command=self.search, width=5)
         self.search_button.grid(row=0, column=width)
         # Big results box. Needs to span past the search button.
-        self.results = ResultsWindow(self.parent, row=height, column=0,
+        self.results = ResultsWindow(self.parent, self, row=height, column=0,
                                      columnspan=width+1,
                                      sticky=tk.W+tk.E+tk.N+tk.S)
         self.results.grid(row=height, column=0, columnspan=width+1,
@@ -166,9 +194,12 @@ class MainApplication(tk.Frame):
     def get_lists(self, location):
         with stalmic_connection() as cursor:
             try:
+                command = '''
+                SELECT {0} FROM {1}
+                WHERE {0} <> '' AND {0} IS NOT NULL
+                '''.format(location[1], location[0])
                 if location[0] == 'Inventory':
-                    location[0] = "Inventory WHERE InventoryNum LIKE '7%'"
-                command = 'SELECT {} FROM {}'.format(location[1], location[0])
+                    command += "AND InventoryNum LIKE '7%'"
             except IndexError:
                 return []
             else:
@@ -185,7 +216,7 @@ class MainApplication(tk.Frame):
                                      textvariable=self.value[label],
                                      values=completion_list)
         combo.set_completion_list(completion_list)
-        combo.grid(row=r+1, column=c)
+        combo.grid(row=r+1, column=c, sticky=tk.W+tk.E)
         return combo
 
     def search(self):
@@ -195,14 +226,17 @@ class MainApplication(tk.Frame):
                     "Service Agr.", "Customer", "Inv. Date", "Vendor",
                     "Pur. Date")]
         customer = self.value["Customer"].get()
-        customer = customer.split()
-        customer = '%' + '%'.join(customer) + '%'
+        if customer:
+            customer = customer.split()
+            customer = '%' + '%'.join(customer) + '%'
         item = self.value["Model No."].get()
-        item = item.split()
-        item = '%' + '%'.join(item) + '%'
+        if item:
+            item = item.split()
+            item = '%' + '%'.join(item) + '%'
         serial = self.value["Serial No."].get()
-        serial = serial.split()
-        serial = '%' + '%'.join(serial) + '%'
+        if serial:
+            serial = serial.split()
+            serial = '%' + '%'.join(serial) + '%'
         pur = self.is_purchase.get()
         serv = self.is_service.get()
         self.results.populate(columns+EquipmentList(CustomerNum=customer,
@@ -228,13 +262,139 @@ class MainApplication(tk.Frame):
         item = get_id(self.value["Model No."].get(),
                       'Inventory', 'InventoryNum')
         serial = self.value["Serial No."].get()
+        vendor = None
+        try:
+            invdate = dateutil.parser.parse(self.value["Invoice Date"].get())
+        except ValueError:
+            invdate = None
+        try:
+            purdate = dateutil.parser.parse(self.value["Purchase Date"].get())
+        except ValueError:
+            purdate = None
         pur = self.is_purchase.get()
         serv = self.is_service.get()
-        EquipmentRecord(item, serial, pur, serv, customer).add_record()
+        EquipmentRecord(item, serial, pur, serv, customer,
+                        invdate, vendor, purdate).add_record()
+
+
+class EditWindow(MainApplication):
+    def __init__(self, parent, main, id, *args, **kwargs):
+        self.parent = parent
+        self.main = main
+        self.id = id
+        # Get default values
+        self.defaults = EquipmentList(ID=self.id).get_equipment()[0]
+        self.window = tk.Toplevel(self.parent)
+        self.window.grab_set()
+        self.window.focus()
+        self.window.update()
+        self.window.minsize(300, self.window.winfo_height()-20)
+        self.value = {}
+
+        self.id_label = tk.Label(self.window, text="ID:")
+        self.id_label.grid(row=0, column=0)
+        self.id_num = tk.Label(self.window, text=self.id)
+        self.id_num.grid(row=0, column=1)
+
+        self.model = self.add_combobox("Model No.:", 1, 0,
+                                       ['Inventory', 'InventoryNum'],
+                                       self.defaults[1])
+        self.serial = self.add_combobox("Serial No.:", 2, 0,
+                                        ['EquipmentRecords', 'SerialNumber'],
+                                        self.defaults[2])
+        self.customer = self.add_combobox("Customer:", 3, 0,
+                                          ['Customer', 'CustomerNum'],
+                                          self.defaults[5])
+        self.invdate = self.add_edit_field("Inv. Date:", 4, 0,
+                                           self.defaults[6])
+        self.purdate = self.add_edit_field("Pur. Date:", 5, 0,
+                                           self.defaults[8])
+        self.is_purchase = tk.IntVar()
+        self._is_purchase = tk.Checkbutton(self.window, text="Stalmic Pur.",
+                                           variable=self.is_purchase)
+        if self.defaults[3]:
+            self._is_purchase.select()
+        self._is_purchase.grid(row=6, column=0, columnspan=2)
+        self.is_service = tk.IntVar()
+        self._is_service = tk.Checkbutton(self.window, text="Service Agr.",
+                                          variable=self.is_service)
+        if self.defaults[4]:
+            self._is_service.select()
+        self._is_service.grid(row=6, column=2)
+
+        self.submit = tk.Button(self.window, text="Submit",
+                                command=self.submit)
+        self.submit.grid(row=7, column=1)
+        self.delete = tk.Button(self.window, text="Delete",
+                                command=self.delete)
+        self.delete.grid(row=7, column=2)
+        width, height = self.window.grid_size()
+        for x in range(width):
+            tk.Grid.columnconfigure(self.window, x, weight=1)
+        for y in range(height):
+            tk.Grid.rowconfigure(self.parent, y, weight=1)
+
+    def add_edit_field(self, label, r, c, default=None):
+        self.value[label] = tk.StringVar()
+        tk.Label(self.window, text=label).grid(row=r, column=c)
+        entry = tk.Entry(self.window, textvariable=self.value[label])
+        if default:
+            self.value[label].set(default)
+        entry.grid(row=r, column=c+1, columnspan=2, sticky=tk.W+tk.E)
+        return entry
+
+    def add_combobox(self, label, r, c, location=[], default=None):
+        completion_list = self.get_lists(location)
+        # Create a StringVar in the Value dictionary
+        self.value[label] = tk.StringVar()
+        tk.Label(self.window, text=label).grid(row=r, column=c)
+        combo = AutocompleteCombobox(self.window,
+                                     textvariable=self.value[label],
+                                     values=completion_list)
+        combo.set_completion_list(completion_list)
+
+        if default:
+            combo.set(default)
+        combo.grid(row=r, column=c+1, columnspan=2, sticky=tk.W+tk.E)
+        return combo
+
+    def submit(self):
+        customer = get_id(self.value["Customer:"].get(),
+                          'Customer', 'CustomerNum')
+        item = get_id(self.value["Model No.:"].get(),
+                      'Inventory', 'InventoryNum')
+        serial = self.value["Serial No.:"].get()
+        vendor = None
+        try:
+            invdate = dateutil.parser.parse(self.value["Inv. Date:"].get())
+        except ValueError:
+            invdate = None
+        try:
+            purdate = dateutil.parser.parse(self.value["Pur. Date:"].get())
+        except ValueError:
+            purdate = None
+        pur = self.is_purchase.get()
+        serv = self.is_service.get()
+        if tk.messagebox.askokcancel(TITLE, "Edit this entry?",
+                                     parent=self.window):
+            EquipmentRecord(item, serial, pur, serv, customer,
+                            invdate, vendor, purdate, self.id).edit_record()
+            self.main.search()
+
+    def delete(self):
+        if tk.messagebox.askokcancel(TITLE, "Delete this entry?",
+                                     parent=self.window):
+            with stalmic_connection(True) as cursor:
+                command = '''
+                DELETE FROM EquipmentRecords WHERE EquipmentRecordsID = ?'''
+                cursor.execute(command, self.id)
+            self.window.destroy()
+            self.main.search()
 
 
 if __name__ == '__main__':
     root = tk.Tk()
+    root.geometry('1024x500')
     root.wm_title(TITLE)
     MainApplication(root)
     root.mainloop()

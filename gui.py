@@ -124,7 +124,8 @@ class MainApplication(tk.Frame):
         # Make a menu bar for the sync command.
         self.menubar = tk.Menu(self.parent)
         self.filemenu = tk.Menu(self.menubar, tearoff=0)
-        self.filemenu.add_command(label='Push to Customer Notes')
+        self.filemenu.add_command(label='Push to Customer Notes',
+                                  command=write_to_notes)
         self.menubar.add_cascade(label='Database', menu=self.filemenu)
         self.parent.config(menu=self.menubar)
         # configure row and column weights.
@@ -332,7 +333,7 @@ class EditWindow(MainApplication):
         for x in range(width):
             tk.Grid.columnconfigure(self.window, x, weight=1)
         for y in range(height):
-            tk.Grid.rowconfigure(self.parent, y, weight=1)
+            tk.Grid.rowconfigure(self.window, y, weight=1)
 
     def add_edit_field(self, label, r, c, default=None):
         self.value[label] = tk.StringVar()

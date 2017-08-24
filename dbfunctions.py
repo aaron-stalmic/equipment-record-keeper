@@ -86,6 +86,68 @@ def get_value_by_id(id, table, column, id_column):
             return None
 
 
+def write_to_notes():
+    with stalmic_connection() as cursor:
+        command = '''
+        UPDATE Note SET NoteText = '--EQUIPMENT--'
+        WHERE NoteText LIKE '--EQUIPMENT--%'
+        '''
+        cursor.execute(command)
+        command = '''
+        SELECT RecordID, NoteID, NoteText FROM Note
+        WHERE ModuleCode = 'Customer' AND NoteText LIKE '--EQUIPMENT--%'
+        '''
+        cursor.execute(command)
+        _notes = cursor.fetchall()
+        notes = {}
+        for item in _notes:
+            notes[item[0]] = [item[1], item[2]]
+
+        command = '''
+        SELECT CustomerID, InventoryNum, SerialNumber, StalmicPurchase,
+        ServiceAgreement
+        FROM EquipmentRecords
+        INNER JOIN Inventory
+        ON EquipmentRecords.InventoryID = Inventory.InventoryID
+        '''
+        cursor.execute(command)
+        equipment = cursor.fetchall()
+    for record in equipment:
+        note = "\n{} ({})".format(record[1], record[2])
+        if record[3]:
+            note += " StalPur"
+        if record[4]:
+            note += " ServAgr"
+        try:
+            notes[record[0]][1] += note
+        except KeyError:
+            notes[record[0]] = [False, "--EQUIPMENT--" + note]
+
+    with stalmic_connection(True) as cursor:
+        for x in notes:
+            if not notes[x][0]:
+                command = '''
+                INSERT INTO Note (ModuleCode, RecordID, NoteText, SendToDevice,
+                AlwaysSendToDevice, NoteDate)
+                VALUES ('Customer', ?, ?, 1, 1, GETDATE())
+                '''
+                cursor.execute(command, (x, notes[x][1]))
+            else:
+                command = '''
+                UPDATE Note
+                SET NoteText = ?
+                WHERE NoteID = ?
+                '''
+                cursor.execute(command, (notes[x][1], notes[x][0]))
+    # Clean up
+    with stalmic_connection(True) as cursor:
+        command = '''
+        DELETE FROM Note
+        WHERE NoteText = '--EQUIPMENT--'
+        '''
+        cursor.execute(command)
+
+
 class EquipmentRecord:
     def __init__(self, InventoryID, SerialNumber=None, StalmicPurchase=True,
                  ServiceAgreement=None, CustomerID=None, InvoiceDate=None,

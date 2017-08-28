@@ -200,7 +200,7 @@ class MainApplication(tk.Frame):
                 WHERE {0} <> '' AND {0} IS NOT NULL
                 '''.format(location[1], location[0])
                 if location[0] == 'Inventory':
-                    command += "AND InventoryNum LIKE '7%'"
+                    command += "AND (InventoryNum LIKE '7%' OR InventoryNum LIKE '8%')"
             except IndexError:
                 return []
             else:

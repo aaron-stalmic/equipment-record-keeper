@@ -147,6 +147,8 @@ def write_to_notes():
         '''
         cursor.execute(command)
 
+    tk.messagebox.showinfo(TITLE, "Successfully pushed.")
+
 
 class EquipmentRecord:
     def __init__(self, InventoryID, SerialNumber=None, StalmicPurchase=True,

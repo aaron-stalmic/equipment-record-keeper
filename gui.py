@@ -141,14 +141,14 @@ class MainApplication(tk.Frame):
         self._invdate.grid(row=0, column=3)
         self.value["Invoice Date"] = tk.StringVar()
         self.invdate = tk.Entry(self.parent,
-                                textvariable=self.value["Invoice Date"]).grid(
-                                row=1, column=3)
+                                textvariable=self.value["Invoice Date"])
+        self.invdate.grid(row=1, column=3)
         self._purdate = tk.Label(self.parent, text="Purchase Date")
         self._purdate.grid(row=0, column=4)
         self.value["Purchase Date"] = tk.StringVar()
         self.purdate = tk.Entry(self.parent,
-                                textvariable=self.value["Purchase Date"]).grid(
-                                row=1, column=4)
+                                textvariable=self.value["Purchase Date"])
+        self.purdate.grid(row=1, column=4)
         # TODO: Implement TRI-STATE VALUE for checkboxes.
         self.is_purchase = tk.IntVar()
         self._is_purchase = tk.Checkbutton(self.parent, text="Stalmic Pur.",
@@ -276,6 +276,19 @@ class MainApplication(tk.Frame):
         serv = self.is_service.get()
         EquipmentRecord(item, serial, pur, serv, customer,
                         invdate, vendor, purdate).add_record()
+        # Clear the fields after adding. Should also probably add a clear
+        # button.
+        self.clear_fields()
+        self.search()
+
+    def clear_fields(self):
+        self.model.set('')
+        self.serial.set('')
+        self.customer.set('')
+        self.invdate.delete(0, tk.END)
+        self.purdate.delete(0, tk.END)
+        self.is_purchase.set(0)
+        self.is_service.set(0)
 
 
 class EditWindow(MainApplication):

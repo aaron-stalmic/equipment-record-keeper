@@ -249,10 +249,12 @@ class EquipmentRecord:
         if self.SerialNumber:
             vars.append(self.SerialNumber)
             var_string.append('SerialNumber = ?')
-        if self.StalmicPurchase:
+        # Have to use "is not None" here because otherwise we can't change
+        # these to False.
+        if self.StalmicPurchase is not None:
             vars.append(self.StalmicPurchase)
             var_string.append('StalmicPurchase = ?')
-        if self.ServiceAgreement:
+        if self.ServiceAgreement is not None:
             vars.append(self.ServiceAgreement)
             var_string.append('ServiceAgreement = ?')
         command += ' ' + ', '.join(var_string)

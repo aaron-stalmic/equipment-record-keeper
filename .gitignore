@@ -1,5 +1,7 @@
 # Config file
 config.cfg
+.vscode/
+*.csv
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

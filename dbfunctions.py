@@ -1,15 +1,36 @@
-import pyodbc
-import itertools
+""" Database functions module for Stalmic Equipment Record Keeper."""
+
 from contextlib import contextmanager
-from config import get_config
-import tkinter as tk
 from tkinter import messagebox
-from gui import TITLE
+import tkinter as tk
 import sys
+import csv
+import re
+import dateutil.parser
+import pyodbc
+from config import get_config
+from gui import TITLE
+
+
+def open_connection(connect_string):
+    """ Opens an ODBC connection and returns the connection using a connect
+    string."""
+    try:
+        connection = pyodbc.connect(connect_string)
+    except:
+        tk.messagebox.showerror(TITLE, "Could not connect to database.")
+        return
+
+    connection.setdecoding(pyodbc.SQL_CHAR, encoding='utf-8')
+    connection.setdecoding(pyodbc.SQL_WCHAR, encoding='utf-8')
+    connection.setencoding('utf-8')
+    return connection
 
 
 @contextmanager
-def open_connection(connect_string, commit=False):
+def yield_connection(connect_string, commit=False):
+    """ Yields a connection generator so that the connection can be used with
+    the with syntax."""
     try:
         connection = pyodbc.connect(connect_string)
     except:
@@ -40,11 +61,21 @@ def open_connection(connect_string, commit=False):
 
 
 def stalmic_connection(commit=False):
+    """ Yields a connection to the Stalmic SQL server."""
     config = get_config()
     connect_string = 'DRIVER={{SQL Server}};SERVER={};DATABASE={};\
             UID={};PWD={}'.format(config[0], config[1],
                                   config[2], config[3])
-    return open_connection(connect_string, commit)
+    return yield_connection(connect_string, commit)
+
+
+def get_stalmic_connection():
+    """ Returns a connection to the Stalmic SQL server."""
+    config = get_config()
+    connect_string = 'DRIVER={{SQL Server}};SERVER={};DATABASE={};\
+            UID={};PWD={}'.format(config[0], config[1],
+                                  config[2], config[3])
+    return open_connection(connect_string)
 
 
 def get_id(value, table, column):
@@ -104,8 +135,8 @@ def write_to_notes():
             notes[item[0]] = [item[1], item[2]]
 
         command = '''
-        SELECT CustomerID, InventoryNum, SerialNumber, StalmicPurchase,
-        ServiceAgreement
+        SELECT CustomerID, InventoryNum, SerialNumber, InvoiceDate,
+        StalmicPurchase, ServiceAgreement
         FROM EquipmentRecords
         INNER JOIN Inventory
         ON EquipmentRecords.InventoryID = Inventory.InventoryID
@@ -113,11 +144,16 @@ def write_to_notes():
         cursor.execute(command)
         equipment = cursor.fetchall()
     for record in equipment:
-        note = "\n{} ({})".format(record[1], record[2])
-        if record[3]:
-            note += " StalPur"
+        note = "\n{} - S/N {},  purchased {}\n    ".format(record[1], record[2],
+        record[3].strftime('%#m/%#d/%y'))
         if record[4]:
-            note += " ServAgr"
+            note += "StalPur"
+        else:
+            note += "NOT STALPUR"
+        if record[5]:
+            note += "  ServAgr"
+        else:
+            note += "  NO SERVAGR"
         try:
             notes[record[0]][1] += note
         except KeyError:
@@ -170,40 +206,61 @@ class EquipmentRecord:
         self.PurchaseDate = PurchaseDate
         self.ID = ID
 
-    def get_item(self):
+    def get_item(self, connection=False):
+        command = '''
+        SELECT InventoryNum FROM Inventory WHERE InventoryID = ?
+        '''
+        if connection:
+            cursor = connection.cursor()
+            cursor.execute(command, self.InventoryID)
+            try:
+                return cursor.fetchone()[0]
+            except TypeError:
+                return None
         with stalmic_connection() as cursor:
-            command = '''
-            SELECT InventoryNum FROM Inventory WHERE InventoryID = ?
-            '''
             cursor.execute(command, self.InventoryID)
             try:
                 return cursor.fetchone()[0]
             except TypeError:
                 return None
 
-    def get_customer(self):
+    def get_customer(self, connection=False):
+        command = '''
+        SELECT CustomerNum FROM Customer WHERE CustomerID = ?
+        '''
+        if connection:
+            cursor = connection.cursor()
+            cursor.execute(command, self.CustomerID)
+            try:
+                return cursor.fetchone()[0]
+            except TypeError:
+                return None
         with stalmic_connection() as cursor:
-            command = '''
-            SELECT CustomerNum FROM Customer WHERE CustomerID = ?
-            '''
             cursor.execute(command, self.CustomerID)
             try:
                 return cursor.fetchone()[0]
             except TypeError:
                 return None
 
-    def get_vendor(self):
+    def get_vendor(self, connection=False):
+        command = '''
+        SELECT VendorNum FROM Vendor WHERE VendorID = ?
+        '''
+        if connection:
+            cursor = connection.cursor()
+            cursor.execute(command, self.VendorID)
+            try:
+                return cursor.fetchone()[0]
+            except TypeError:
+                return None
         with stalmic_connection() as cursor:
-            command = '''
-            SELECT VendorNum FROM Vendor WHERE VendorID = ?
-            '''
             cursor.execute(command, self.VendorID)
             try:
                 return cursor.fetchone()[0]
             except TypeError:
                 return None
 
-    def get_record(self):
+    def get_record(self, connection=False):
         try:
             invdate = self.InvoiceDate.strftime("%m/%d/%Y")
         except AttributeError:
@@ -212,9 +269,10 @@ class EquipmentRecord:
             purdate = self.PurchaseDate.strftime("%m/%d/%Y")
         except AttributeError:
             purdate = None
-        return (self.ID, self.get_item(), self.SerialNumber,
+        return (self.ID, self.get_item(connection), self.SerialNumber,
                 self.StalmicPurchase, self.ServiceAgreement,
-                self.get_customer(), invdate, self.get_vendor(), purdate)
+                self.get_customer(connection), invdate,
+                self.get_vendor(connection), purdate)
 
     def add_record(self):
         with stalmic_connection(True) as cursor:
@@ -341,8 +399,9 @@ class EquipmentList:
             self.equipment = cursor.fetchall()
         self.equipment = [EquipmentRecord(*x) for x in self.equipment]
 
-    def get_equipment(self):
-        return [x.get_record() for x in self.equipment]
+    def get_equipment(self, connection=False):
+        return [x.get_record(connection) for x in self.equipment]
+        
 
     def get_string(self):
         columns = [("ID", "Model No.", "Serial No.", "Stalmic Pur.",
@@ -368,3 +427,76 @@ class EquipmentList:
 
     def __repr__(self):
         return str(self.equipment)
+
+
+def import_sales_csv(filename):
+    """ Imports sales data from a CSV."""
+    with open(filename, newline='', encoding='utf-8-sig') as file:
+        reader = list(csv.reader(file))
+    for item in reader:
+        if item[0] == "Invoice":
+            inv_date = None if item[1] == '' else dateutil.parser.parse(item[1])
+            customer_id = get_id(item[2], 'Customer', 'CustomerNum')
+            inv_num = re.search(r'(.+?)(?= \()', item[3])
+            inv_num = inv_num.group(0)
+            item_id = get_id(inv_num, 'Inventory', 'InventoryNum')
+            serial = item[5].split(',')
+            for i in range(int(item[4])):
+                try:
+                    serial[i]
+                except IndexError:
+                    serial.append(None)
+                if customer_id is not None and item_id is not None: 
+                    print(item)
+                    e = EquipmentRecord(item_id, serial[i], True, False,
+                                        customer_id, inv_date)
+                    e.add_record()
+    for item in reader:
+        if item[0] == 'Invoice':
+            if int(item[4]) < 0:
+                serial = item[5].split(',')
+                for i in range(-int(item[4])):
+                    try:
+                        serial[i]
+                    except IndexError:
+                        pass
+                    else:
+                        inv_num = re.search(r'(.+?)(?= \()', item[3])
+                        inv_num = inv_num.group(0)
+                        e = EquipmentList(InventoryNum=inv_num,
+                                          SerialNumber=serial[i],
+                                          CustomerNum=item[2])
+                        e = e.get_equipment()
+                        for j in e:
+                            if (dateutil.parser.parse(j[6]) <
+                                dateutil.parser.parse(item[1])):
+                                print("REMOVING", item)
+                                with stalmic_connection(True) as cursor:
+                                    command = '''
+                                    DELETE FROM EquipmentRecords
+                                    WHERE EquipmentRecordsID = ?'''
+                                    cursor.execute(command, j[0])
+
+
+def import_purchases_csv(filename):
+    """ Imports purchase data from a CSV."""
+    with open(filename, newline='', encoding='utf-8-sig') as file:
+        reader = list(csv.reader(file))
+    for item in reader:
+        if item[0] == 'Bill' and item[1] != '':
+            pur_date = dateutil.parser.parse(item[1])
+            serial = item[5].split(',')
+            for serial_number in serial:
+                if serial_number == '':
+                    break
+                e = EquipmentList(SerialNumber=serial_number)
+                e = e.get_equipment()
+                if len(e) > 0:
+                    print(item)
+                for i in e:
+                    with stalmic_connection(True) as cursor:
+                        command = '''
+                        UPDATE EquipmentRecords
+                        SET PurchaseDate = ?
+                        WHERE EquipmentRecordsID = ?'''
+                        cursor.execute(command, (pur_date, i[0]))

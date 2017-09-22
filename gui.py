@@ -1,13 +1,17 @@
+""" GUI Module for Stalmic Equipment Record Keeper
+"""
+
 import tkinter as tk
 from tkinter import ttk
-import dateutil.parser
-from dbfunctions import *
 from tkinter import font
+import dbfunctions as db
+import dateutil.parser
 
 TITLE = "Equipment Records"
 
 
 class AutocompleteCombobox(ttk.Combobox):
+    """ An auto-completing combobox."""
     def set_completion_list(self, completion_list):
         """
         Use our completion list as our drop down selection menu, arrows move
@@ -61,12 +65,13 @@ class AutocompleteCombobox(ttk.Combobox):
             #    self.position = self.position - 1  # Delete one character.
             #    self.delete(self.position, tk.END)
         if event.keysym == 'Right' or event.keysym == 'KP_Enter':
-            self.position == self.index(tk.END)  # Go to end (no selection)
+            self.position = self.index(tk.END)  # Go to end (no selection)
         if len(event.keysym) == 1:
             self.autocomplete()
 
 
 class ResultsWindow(tk.Frame):
+    """ Used for showing the results of a search."""
     def __init__(self, parent, main, row, column, columnspan=1, sticky=None):
         self.parent = parent
         self.main = main
@@ -83,16 +88,17 @@ class ResultsWindow(tk.Frame):
         self.canvas.create_window((4, 4), window=self.frame, anchor='nw',
                                   tags='self.frame')
         self.canvas.bind_all('<MouseWheel>', self._on_mousewheel)
-        self.frame.bind('<Configure>', self.onFrameConfigure)
+        self.frame.bind('<Configure>', self.on_frame_configure)
 
     def populate(self, data):
+        """ Populates the results window with results in a grid."""
         for widget in self.frame.winfo_children():
             widget.destroy()
-        for r in range(len(data)):
+        for r in range(min(len(data), 100)):
             if r != 0:
                 editbutton = tk.Button(self.frame, text="Edit",
                                        command=lambda x=r: self.edit(
-                                                                data[x][0]))
+                                           data[x][0]))
                 editbutton.grid(row=r, column=0)
             for c in range(len(data[r])):
                 item = tk.Label(self.frame, text=str(data[r][c]))
@@ -105,19 +111,22 @@ class ResultsWindow(tk.Frame):
                 elif data[r][c] is False:
                     item.configure(text='NO', foreground='red')
                 item.grid(row=r, column=c+1, padx=5)
+            root.update()
 
-    def onFrameConfigure(self, event):
-        '''Reset the scroll region to encompass the inner frame'''
+    def on_frame_configure(self, event):
+        """ Reset the scroll region to encompass the inner frame"""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*event.delta//120), 'units')
 
     def edit(self, id):
+        """ Initialize the edit window."""
         EditWindow(self, self.main, id)
 
 
 class MainApplication(tk.Frame):
+    """ Class for main GUI window."""
     def __init__(self, parent, *args, **kwargs):
         tk.Frame.__init__(self, parent, *args, **kwargs)
         self.parent = parent
@@ -125,7 +134,7 @@ class MainApplication(tk.Frame):
         self.menubar = tk.Menu(self.parent)
         self.filemenu = tk.Menu(self.menubar, tearoff=0)
         self.filemenu.add_command(label='Push to Customer Notes',
-                                  command=write_to_notes)
+                                  command=db.write_to_notes)
         self.menubar.add_cascade(label='Database', menu=self.filemenu)
         self.parent.config(menu=self.menubar)
         # configure row and column weights.
@@ -193,7 +202,8 @@ class MainApplication(tk.Frame):
             tk.Grid.rowconfigure(self.parent, y, weight=1)
 
     def get_lists(self, location):
-        with stalmic_connection() as cursor:
+        """ Gets lists for the autocomplete comboboxes."""
+        with db.stalmic_connection() as cursor:
             try:
                 command = '''
                 SELECT {0} FROM {1}
@@ -208,7 +218,9 @@ class MainApplication(tk.Frame):
                 values = cursor.fetchall()
                 return [item for sublist in values for item in sublist]
 
-    def add_combobox(self, label, r, c, location=[]):
+    def add_combobox(self, label, r, c, location=None):
+        """ Adds a combobox and label to the GUI at a given row and column
+        and at a specified location in the database."""
         completion_list = self.get_lists(location)
         # Create a StringVar in the Value dictionary
         self.value[label] = tk.StringVar()
@@ -221,6 +233,7 @@ class MainApplication(tk.Frame):
         return combo
 
     def search(self):
+        """ Initiates a search using what is entered in the comboboxes."""
         # Make the search more user friendly. Searches for items that contain
         # search term.
         columns = [("ID", "Model No.", "Serial No.", "Stalmic Pur.",
@@ -240,12 +253,15 @@ class MainApplication(tk.Frame):
             serial = '%' + '%'.join(serial) + '%'
         pur = self.is_purchase.get()
         serv = self.is_service.get()
-        self.results.populate(columns+EquipmentList(CustomerNum=customer,
-                                                    InventoryNum=item,
-                                                    SerialNumber=serial,
-                                                    StalmicPurchase=pur,
-                                                    ServiceAgreement=serv
-                                                    ).get_equipment())
+        connection = db.get_stalmic_connection()
+        self.results.populate(columns+
+                              db.EquipmentList(CustomerNum=customer,
+                                               InventoryNum=item,
+                                               SerialNumber=serial,
+                                               StalmicPurchase=pur,
+                                               ServiceAgreement=serv
+                                              ).get_equipment(connection))
+        connection.close()
         # self.results.config(state=tk.NORMAL)
         # self.results.delete(1.0, tk.END)
         # self.results.insert(tk.END,
@@ -257,11 +273,13 @@ class MainApplication(tk.Frame):
         # self.results.config(state=tk.DISABLED)
 
     def add_entry(self):
+        """ Adds an entry to the database using information in the comboboxes.
+        """
         # Get Customer, Item, Vendor IDs.
-        customer = get_id(self.value["Customer"].get(),
-                          'Customer', 'CustomerNum')
-        item = get_id(self.value["Model No."].get(),
-                      'Inventory', 'InventoryNum')
+        customer = db.get_id(self.value["Customer"].get(),
+                             'Customer', 'CustomerNum')
+        item = db.get_id(self.value["Model No."].get(),
+                         'Inventory', 'InventoryNum')
         serial = self.value["Serial No."].get()
         vendor = None
         try:
@@ -274,14 +292,15 @@ class MainApplication(tk.Frame):
             purdate = None
         pur = self.is_purchase.get()
         serv = self.is_service.get()
-        EquipmentRecord(item, serial, pur, serv, customer,
-                        invdate, vendor, purdate).add_record()
+        db.EquipmentRecord(item, serial, pur, serv, customer,
+                           invdate, vendor, purdate).add_record()
         # Clear the fields after adding. Should also probably add a clear
         # button.
         self.clear_fields()
         self.search()
 
     def clear_fields(self):
+        """ Clears the comboboxes."""
         self.model.set('')
         self.serial.set('')
         self.customer.set('')
@@ -292,12 +311,13 @@ class MainApplication(tk.Frame):
 
 
 class EditWindow(MainApplication):
+    """ Window used for editing, deleting, and saving individual entries."""
     def __init__(self, parent, main, id, *args, **kwargs):
         self.parent = parent
         self.main = main
         self.id = id
         # Get default values
-        self.defaults = EquipmentList(ID=self.id).get_equipment()[0]
+        self.defaults = db.EquipmentList(ID=self.id).get_equipment()[0]
         self.window = tk.Toplevel(self.parent)
         self.window.grab_set()
         self.window.focus()
@@ -336,12 +356,12 @@ class EditWindow(MainApplication):
             self._is_service.select()
         self._is_service.grid(row=6, column=2)
 
-        self.submit = tk.Button(self.window, text="Submit",
-                                command=self.submit)
-        self.submit.grid(row=7, column=1)
-        self.delete = tk.Button(self.window, text="Delete",
-                                command=self.delete)
-        self.delete.grid(row=7, column=2)
+        self.submitbutton = tk.Button(self.window, text="Submit",
+                                      command=self.submit)
+        self.submitbutton.grid(row=7, column=1)
+        self.deletebutton = tk.Button(self.window, text="Delete",
+                                      command=self.delete)
+        self.deletebutton.grid(row=7, column=2)
         width, height = self.window.grid_size()
         for x in range(width):
             tk.Grid.columnconfigure(self.window, x, weight=1)
@@ -349,6 +369,8 @@ class EditWindow(MainApplication):
             tk.Grid.rowconfigure(self.window, y, weight=1)
 
     def add_edit_field(self, label, r, c, default=None):
+        """ Adds a field and a label in the edit window at a specified row and
+        column, with a default value if there is one."""
         self.value[label] = tk.StringVar()
         tk.Label(self.window, text=label).grid(row=r, column=c)
         entry = tk.Entry(self.window, textvariable=self.value[label])
@@ -357,7 +379,9 @@ class EditWindow(MainApplication):
         entry.grid(row=r, column=c+1, columnspan=2, sticky=tk.W+tk.E)
         return entry
 
-    def add_combobox(self, label, r, c, location=[], default=None):
+    def add_combobox(self, label, r, c, location=None, default=None):
+        """ Adds a combobox and a label in the dit window at a specified row
+        and column from a location in the database and a default value."""
         completion_list = self.get_lists(location)
         # Create a StringVar in the Value dictionary
         self.value[label] = tk.StringVar()
@@ -373,10 +397,11 @@ class EditWindow(MainApplication):
         return combo
 
     def submit(self):
-        customer = get_id(self.value["Customer:"].get(),
-                          'Customer', 'CustomerNum')
-        item = get_id(self.value["Model No.:"].get(),
-                      'Inventory', 'InventoryNum')
+        """ Saves edited changes."""
+        customer = db.get_id(self.value["Customer:"].get(),
+                             'Customer', 'CustomerNum')
+        item = db.get_id(self.value["Model No.:"].get(),
+                         'Inventory', 'InventoryNum')
         serial = self.value["Serial No.:"].get()
         vendor = None
         try:
@@ -391,14 +416,15 @@ class EditWindow(MainApplication):
         serv = self.is_service.get()
         if tk.messagebox.askokcancel(TITLE, "Edit this entry?",
                                      parent=self.window):
-            EquipmentRecord(item, serial, pur, serv, customer,
-                            invdate, vendor, purdate, self.id).edit_record()
+            db.EquipmentRecord(item, serial, pur, serv, customer,
+                               invdate, vendor, purdate, self.id).edit_record()
             self.main.search()
 
     def delete(self):
+        """ Deletes an entry from the database via the edit window."""
         if tk.messagebox.askokcancel(TITLE, "Delete this entry?",
                                      parent=self.window):
-            with stalmic_connection(True) as cursor:
+            with db.stalmic_connection(True) as cursor:
                 command = '''
                 DELETE FROM EquipmentRecords WHERE EquipmentRecordsID = ?'''
                 cursor.execute(command, self.id)

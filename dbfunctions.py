@@ -7,6 +7,8 @@ import sys
 import csv
 import re
 import dateutil.parser
+import dateutil.relativedelta
+import datetime
 import pyodbc
 from config import get_config
 from gui import TITLE
@@ -144,7 +146,7 @@ def write_to_notes():
         cursor.execute(command)
         equipment = cursor.fetchall()
     for record in equipment:
-        note = "\n{} - S/N {},  purchased {}\n    ".format(record[1], record[2],
+        note = "\n{} #{}, {}\n ".format(record[1], record[2],
         record[3].strftime('%#m/%#d/%y'))
         if record[4]:
             note += "StalPur"
@@ -332,7 +334,8 @@ class EquipmentRecord:
 class EquipmentList:
     def __init__(self, CustomerID=None, InventoryID=None, SerialNumber=None,
                  CustomerNum=None, InventoryNum=None, StalmicPurchase=None,
-                 ServiceAgreement=None, ID=None):
+                 ServiceAgreement=None, InvoiceDate=None, PurchaseDate=None,
+                 ID=None):
         self.CustomerID = CustomerID
         self.InventoryID = InventoryID
         self.SerialNumber = SerialNumber
@@ -341,6 +344,8 @@ class EquipmentList:
         # These are for searches:
         self.CustomerNum = CustomerNum
         self.InventoryNum = InventoryNum
+        self.InvoiceDate = InvoiceDate
+        self.PurchaseDate = PurchaseDate
         self.ID = ID
         # Build the SELECT statement.
         equipment_command = '''
@@ -377,6 +382,12 @@ class EquipmentList:
         if self.StalmicPurchase:
             vars.append(self.StalmicPurchase)
             var_string.append('StalmicPurchase = ?')
+        if self.InvoiceDate:
+            vars.append(self.InvoiceDate)
+            var_string.append('InvoiceDate = ?')
+        if self.PurchaseDate:
+            vars.append(self.PurchaseDate)
+            var_string.append('PurchaseDate = ?')
         if self.ID:
             vars.append(self.ID)
             var_string.append('EquipmentRecordsID = ?')
@@ -401,7 +412,7 @@ class EquipmentList:
 
     def get_equipment(self, connection=False):
         return [x.get_record(connection) for x in self.equipment]
-        
+
 
     def get_string(self):
         columns = [("ID", "Model No.", "Serial No.", "Stalmic Pur.",
@@ -434,7 +445,7 @@ def import_sales_csv(filename):
     with open(filename, newline='', encoding='utf-8-sig') as file:
         reader = list(csv.reader(file))
     for item in reader:
-        if item[0] == "Invoice":
+        if item[0] == 'Invoice' or item[0] == 'Credit Memo':
             inv_date = None if item[1] == '' else dateutil.parser.parse(item[1])
             customer_id = get_id(item[2], 'Customer', 'CustomerNum')
             inv_num = re.search(r'(.+?)(?= \()', item[3])
@@ -445,43 +456,45 @@ def import_sales_csv(filename):
                 try:
                     serial[i]
                 except IndexError:
-                    serial.append(None)
-                if customer_id is not None and item_id is not None: 
-                    print(item)
+                    break
+                if customer_id is not None and item_id is not None:
                     e = EquipmentRecord(item_id, serial[i], True, False,
                                         customer_id, inv_date)
                     e.add_record()
     for item in reader:
-        if item[0] == 'Invoice':
+        if item[0] == 'Invoice' or item[0] == 'Credit Memo':
             if int(item[4]) < 0:
                 serial = item[5].split(',')
                 for i in range(-int(item[4])):
                     try:
                         serial[i]
                     except IndexError:
-                        pass
+                        break
                     else:
                         inv_num = re.search(r'(.+?)(?= \()', item[3])
                         inv_num = inv_num.group(0)
                         e = EquipmentList(InventoryNum=inv_num,
                                           SerialNumber=serial[i],
                                           CustomerNum=item[2])
-                        e = e.get_equipment()
+                        # Reverse sort order so that newer items are first.
+                        e = e.get_equipment()[::-1]
                         for j in e:
                             if (dateutil.parser.parse(j[6]) <
-                                dateutil.parser.parse(item[1])):
+                                    dateutil.parser.parse(item[1])):
                                 print("REMOVING", item)
                                 with stalmic_connection(True) as cursor:
                                     command = '''
                                     DELETE FROM EquipmentRecords
                                     WHERE EquipmentRecordsID = ?'''
                                     cursor.execute(command, j[0])
+                                break
 
 
 def import_purchases_csv(filename):
     """ Imports purchase data from a CSV."""
     with open(filename, newline='', encoding='utf-8-sig') as file:
         reader = list(csv.reader(file))
+    serials = set()
     for item in reader:
         if item[0] == 'Bill' and item[1] != '':
             pur_date = dateutil.parser.parse(item[1])
@@ -489,10 +502,10 @@ def import_purchases_csv(filename):
             for serial_number in serial:
                 if serial_number == '':
                     break
+                if serial_number in serials:
+                    print("DUPLICATE SERIAL:", serial_number)
                 e = EquipmentList(SerialNumber=serial_number)
                 e = e.get_equipment()
-                if len(e) > 0:
-                    print(item)
                 for i in e:
                     with stalmic_connection(True) as cursor:
                         command = '''
@@ -500,3 +513,37 @@ def import_purchases_csv(filename):
                         SET PurchaseDate = ?
                         WHERE EquipmentRecordsID = ?'''
                         cursor.execute(command, (pur_date, i[0]))
+
+
+def import_warranty_csv(filename):
+    """Imports warranty data from a CSV."""
+    with open(filename, newline='', encoding='utf-8-sig') as file:
+        reader = list(csv.reader(file))
+    for item in reader:
+        if item[0] == 'Invoice' and item[1] != '' and int(item[4]) > 0:
+            inv_date = dateutil.parser.parse(item[1])
+            today = datetime.datetime.now()
+            last_year = today - dateutil.relativedelta.relativedelta(years=1)
+            six_mos = today - dateutil.relativedelta.relativedelta(months=6)
+            ninety_days = today - dateutil.relativedelta.relativedelta(days=90)
+            if item[3][0:4] == '1 Yr' and inv_date < last_year:
+                continue
+            if item[3][0:4] == '6 Mo' and inv_date < six_mos:
+                continue
+            if item[3][0:4] == '90 D' and inv_date < ninety_days:
+                continue
+            if item[3][0:5] == 'Labor':
+                e = EquipmentList(CustomerNum=item[2],
+                                  InventoryNum='%NBAW%')
+            else:
+                e = EquipmentList(CustomerNum=item[2],
+                                  InvoiceDate=item[1])
+            e = e.get_equipment()
+            for i in e:
+                if dateutil.parser.parse(i[6]) <= inv_date:
+                    with stalmic_connection(True) as cursor:
+                        command = '''
+                        UPDATE EquipmentRecords
+                        SET ServiceAgreement = 1
+                        WHERE EquipmentRecordsID = ?'''
+                        cursor.execute(command, i[0])

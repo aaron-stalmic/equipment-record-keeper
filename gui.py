@@ -87,7 +87,8 @@ class ResultsWindow(tk.Frame):
                          sticky=sticky)
         self.canvas.create_window((4, 4), window=self.frame, anchor='nw',
                                   tags='self.frame')
-        self.canvas.bind_all('<MouseWheel>', self._on_mousewheel)
+        self.parent.bind('<Enter>', self._bound_to_mousewheel)
+        self.parent.bind('<Leave>', self._unbound_to_mousewheel)
         self.frame.bind('<Configure>', self.on_frame_configure)
 
     def populate(self, data):
@@ -116,6 +117,12 @@ class ResultsWindow(tk.Frame):
     def on_frame_configure(self, event):
         """ Reset the scroll region to encompass the inner frame"""
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def _bound_to_mousewheel(self, event):
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbound_to_mousewheel(self, event):
+        self.canvas.unbind_all("<MouseWheel>")
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*event.delta//120), 'units')
@@ -296,8 +303,8 @@ class MainApplication(tk.Frame):
                            invdate, vendor, purdate).add_record()
         # Clear the fields after adding. Should also probably add a clear
         # button.
-        self.clear_fields()
         self.search()
+        self.clear_fields()
 
     def clear_fields(self):
         """ Clears the comboboxes."""

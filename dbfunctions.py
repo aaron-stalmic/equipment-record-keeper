@@ -137,7 +137,7 @@ def write_to_notes():
             notes[item[0]] = [item[1], item[2]]
 
         command = '''
-        SELECT CustomerID, InventoryNum, SerialNumber, InvoiceDate,
+        SELECT CustomerID, InventoryNum, SerialNumber, InvoiceDate, PurchaseDate,
         StalmicPurchase, ServiceAgreement
         FROM EquipmentRecords
         INNER JOIN Inventory
@@ -146,13 +146,20 @@ def write_to_notes():
         cursor.execute(command)
         equipment = cursor.fetchall()
     for record in equipment:
-        note = "\n{} #{}, {}\n ".format(record[1], record[2],
-        record[3].strftime('%#m/%#d/%y'))
-        if record[4]:
+        try:
+            note = "\n{} #{}, {}\n ".format(record[1], record[2],
+            record[3].strftime('%#m/%#d/%y'))
+        except AttributeError:
+            try:
+                note = "\n{} #{}, {}\n ".format(record[1], record[2],
+                record[4].strftime('%#m/%#d/%y'))
+            except AttributeError:
+                note = "\n{} #{}\n ".format(record[1], record[2])
+        if record[5]:
             note += "StalPur"
         else:
             note += "NOT STALPUR"
-        if record[5]:
+        if record[6]:
             note += "  ServAgr"
         else:
             note += "  NO SERVAGR"
